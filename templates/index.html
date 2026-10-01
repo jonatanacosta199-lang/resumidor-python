@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Resumidor Académico</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen flex flex-col">
+
+  <header class="bg-indigo-700 text-white p-4 shadow-md">
+    <div class="max-w-3xl mx-auto flex justify-between items-center">
+      <h1 class="text-base font-bold">📚 Resumidor Académico Pro</h1>
+      <button onclick="requestNotificationPermission()" class="text-xs bg-indigo-800 hover:bg-indigo-900 px-3 py-1.5 rounded-lg border border-indigo-400">
+        🔔 Activar Notificaciones
+      </button>
+    </div>
+  </header>
+
+  <main class="max-w-3xl mx-auto w-full p-4 flex-grow space-y-4">
+    <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 space-y-4">
+      <div>
+        <label class="block text-xs font-bold text-slate-700 mb-1">1. Seleccionar PDF (Nativo o Escaneado)</label>
+        <input type="file" id="pdf-file" accept="application/pdf" class="w-full text-xs text-slate-500 file:mr-2 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer border border-slate-200 rounded-lg">
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div>
+          <label class="block text-xs font-bold text-slate-700 mb-1">2. API Key de Google Gemini</label>
+          <input type="password" id="api-key" placeholder="AIzaSy..." class="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono">
+        </div>
+        <div>
+          <label class="block text-xs font-bold text-slate-700 mb-1">3. Nivel de Detalle</label>
+          <select id="ratio" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white">
+            <option value="0.30">30% (Sintético)</option>
+            <option value="0.50">50% (Estándar)</option>
+            <option value="0.70" selected>70% (Detallado y Exhaustivo)</option>
+          </select>
+        </div>
+      </div>
+
+      <button onclick="startProcessing()" id="btn-submit" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-lg text-xs transition shadow-sm">
+        🚀 Iniciar Resumen
+      </button>
+    </div>
+
+    <div id="progress-panel" class="hidden bg-white p-5 rounded-2xl shadow-sm border border-slate-200 space-y-3">
+      <div class="flex justify-between items-center text-xs font-bold text-slate-700">
+        <span id="status-message">Iniciando...</span>
+        <span id="status-percentage">0%</span>
+      </div>
+      <div class="w-full bg-slate-200 rounded-full h-3 overflow-hidden">
+        <div id="progress-bar" class="bg-indigo-600 h-3 rounded-full transition-all duration-300" style="width: 0%"></div>
+      </div>
+      <p class="text-[11px] text-slate-500 text-center">Puedes minimizar la pestaña o bloquear la pantalla. Te notificaremos al terminar.</p>
+    </div>
+
+    <div id="result-panel" class="hidden bg-white p-5 rounded-2xl shadow-sm border border-slate-200 space-y-3">
+      <div class="flex justify-between items-center border-b pb-2">
+        <h2 class="text-sm font-bold text-indigo-900">Resumen Completado</h2>
+        <a id="btn-download" href="#" target="_blank" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition">
+          📥 Descargar .DOCX
+        </a>
+      </div>
+      <textarea id="result-text" rows="14" class="w-full p-3 border border-slate-200 rounded-lg text-xs leading-relaxed font-serif text-slate-800" readonly></textarea>
+    </div>
+  </main>
+
+  <script>
+    let currentJobId = null;
+
+    document.addEventListener('DOMContentLoaded', () => {
+      const savedKey = localStorage.getItem('gemini_api_key');
+      if (savedKey) document.getElementById('api-key').value = savedKey;
+    });
+
+    function requestNotificationPermission() {
+      if ("Notification" in window) {
+        Notification.requestPermission().then(perm => {
+          if (perm === "granted") alert("Notificaciones activadas.");
+        });
+      }
+    }
+
+    async function startProcessing() {
+      const fileInput = document.getElementById('pdf-file');
+      const apiKey = document.getElementById('api-key').value.trim();
+      const ratio = document.getElementById('ratio').value;
+
+      if (!fileInput.files[0]) return alert("Selecciona un PDF.");
+      if (!apiKey) return alert("Ingresa tu API Key.");
+
+      localStorage.setItem('gemini_api_key', apiKey);
+
+      const formData = new FormData();
+      formData.append('file', fileInput.files[0]);
+      formData.append('api_key', apiKey);
+      formData.append('ratio', ratio);
+
+      document.getElementById('btn-submit').disabled = true;
+      document.getElementById('progress-panel').classList.remove('hidden');
+      document.getElementById('result-panel').classList.add('hidden');
+
+      try {
+        const res = await fetch('/api/summarize', { method: 'POST', body: formData });
+        const data = await res.json();
+        currentJobId = data.job_id;
+        pollStatus();
+      } catch (err) {
+        alert("Error: " + err.message);
+        document.getElementById('btn-submit').disabled = false;
+      }
+    }
+
+    function pollStatus() {
+      if (!currentJobId) return;
+
+      const interval = setInterval(async () => {
+        try {
+          const res = await fetch(`/api/status/${currentJobId}`);
+          const data = await res.json();
+
+          document.getElementById('status-message').textContent = data.message;
+          document.getElementById('status-percentage').textContent = `${data.progress}%`;
+          document.getElementById('progress-bar').style.width = `${data.progress}%`;
+
+          if (data.status === 'completed') {
+            clearInterval(interval);
+            document.getElementById('btn-submit').disabled = false;
+            document.getElementById('result-panel').classList.remove('hidden');
+            document.getElementById('result-text').value = data.result;
+            document.getElementById('btn-download').href = `/api/download/${currentJobId}`;
+
+            if ("Notification" in window && Notification.permission === "granted") {
+              new Notification("📚 Resumen Listo", {
+                body: `Se ha completado el resumen de "${data.filename}".`
+              });
+            }
+          } else if (data.status === 'failed') {
+            clearInterval(interval);
+            document.getElementById('btn-submit').disabled = false;
+            alert("Ocurrió un error: " + data.error);
+          }
+        } catch (e) {}
+      }, 2500);
+    }
+  </script>
+</body>
+</html>
